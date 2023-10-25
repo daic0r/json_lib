@@ -7,6 +7,9 @@ fn main() {
     let str = r#"{
     "str": "hallo",
     "num": -12.0,
+    "b" : true,
+    "b2" : false,
+    "nil" : null
 }"#;
     j.parse(str);
 }

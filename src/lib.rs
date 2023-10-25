@@ -9,6 +9,8 @@ pub mod json_lib2 {
         CloseSquare,
         String(String),
         Number(f32),
+        Boolean(bool),
+        Null,
         Comma,
         Colon,
         Quote,
@@ -37,13 +39,15 @@ pub mod json_lib2 {
 
     pub struct Json {
         //root: HashMap<String, Datum>,
-        tokens: Vec<LexicalToken>
+        tokens: Vec<LexicalToken>,
+        tok_expected: Vec<Token>
     }
 
     impl Json {
         pub fn new() -> Self {
             Json {
-                tokens: vec![]
+                tokens: vec![],
+                tok_expected: vec![Token::OpenCurly]
             }
         }
 
@@ -68,6 +72,52 @@ pub mod json_lib2 {
                         ']' => Token::CloseSquare,
                         ':' => Token::Colon,
                         ',' => Token::Comma,
+                        't' => {
+                            iter.next();
+                            let mut idx = 0;
+                            while let Some((_, ch)) = iter.peek() {
+                                match idx {
+                                    0 => assert_eq!(*ch, 'r'),
+                                    1 => assert_eq!(*ch, 'u'),
+                                    2 => { assert_eq!(*ch, 'e'); break; }
+                                    _ => {}
+                                };
+                                idx += 1;
+                                iter.next();
+                            }
+                            Token::Boolean(true)
+                        },
+                        'f' => {
+                            iter.next();
+                            let mut idx = 0;
+                            while let Some((_, ch)) = iter.peek() {
+                                match idx {
+                                    0 => assert_eq!(*ch, 'a'),
+                                    1 => assert_eq!(*ch, 'l'),
+                                    2 => assert_eq!(*ch, 's'),
+                                    3 => { assert_eq!(*ch, 'e'); break; }
+                                    _ => {}
+                                };
+                                idx += 1;
+                                iter.next();
+                            }
+                            Token::Boolean(false)
+                        },
+                        'n' => {
+                            iter.next();
+                            let mut idx = 0;
+                            while let Some((_, ch)) = iter.peek() {
+                                match idx {
+                                    0 => assert_eq!(*ch, 'u'),
+                                    1 => assert_eq!(*ch, 'l'),
+                                    2 => { assert_eq!(*ch, 'l'); break; }
+                                    _ => {}
+                                };
+                                idx += 1;
+                                iter.next();
+                            }
+                            Token::Null
+                        },
                         '"' => {
                             let mut s = String::new();
                             let mut string_closed = false;
@@ -126,7 +176,7 @@ pub mod json_lib2 {
                     });
                     if !is_num {
                         iter.next();
-                    }
+                   }
                 }
             }
         }
