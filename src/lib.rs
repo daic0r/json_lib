@@ -1,5 +1,5 @@
 pub mod json_lib2 {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque, HashSet};
 
     #[derive(PartialEq, Clone, Debug)]
     pub enum Token {
@@ -20,7 +20,9 @@ pub mod json_lib2 {
     enum Datum {
         Str(String),
         Number(f32),
-        Object(HashMap<String, Datum>),
+        Boolean(bool),
+        Null,
+        Object(HashMap::<String, Datum>),
         Array(Vec<Datum>)
     }
 
@@ -30,24 +32,37 @@ pub mod json_lib2 {
         row: usize
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     struct LexicalToken {
         token: Token,
         from: SourceLocation,
         to: SourceLocation
     }
 
+    #[derive(Debug)]
+    pub enum ParseError {
+        UnexpectedToken(LexicalToken),
+        UnexpectedEof
+    }
+
+    enum ParsePhase {
+        FindKey,
+        FindKeyOrEnd,
+        FindColon,
+        FindValue,
+        FindCommaOrEnd
+    }
+
     pub struct Json {
-        //root: HashMap<String, Datum>,
-        tokens: Vec<LexicalToken>,
-        tok_expected: Vec<Token>
+        pub root: Option<HashMap<String, Datum>>,
+        tokens: VecDeque<LexicalToken>,
     }
 
     impl Json {
         pub fn new() -> Self {
             Json {
-                tokens: vec![],
-                tok_expected: vec![Token::OpenCurly]
+                root: None,
+                tokens: VecDeque::<LexicalToken>::new()
             }
         }
 
@@ -166,7 +181,7 @@ pub mod json_lib2 {
                         Token::Number(_) => true,
                         _ => false
                     };
-                    self.tokens.push(LexicalToken{
+                    self.tokens.push_back(LexicalToken{
                         token: tok,
                         from: start_loc,
                         to: SourceLocation {
@@ -181,9 +196,134 @@ pub mod json_lib2 {
             }
         }
 
-        pub fn parse(&mut self, src: &str) {
+        fn parse_array(&mut self) -> Result<Vec<Datum>, ParseError> {
+            if self.tokens.is_empty() || self.tokens.front().unwrap().token != Token::OpenSquare {
+                panic!("Invalid syntax");
+            }
+            
+            let mut ret = Vec::<Datum>::new();
+
+            let mut cur_phase = ParsePhase::FindValue;
+
+            self.tokens.pop_front();
+            loop {
+                let cur_tok = self.tokens.front();
+                if cur_tok.is_none() {
+                    return Err(ParseError::UnexpectedEof);
+                }
+                if let Some(tok) = cur_tok {
+                    match cur_phase {
+                        ParsePhase::FindValue => {
+                            let mut val: Datum;
+                            match tok.token {
+                                Token::OpenCurly => val = Datum::Object(self.parse_impl()?),
+                                Token::String(str) => val = Datum::Str(str),
+                                Token::Boolean(b) => val = Datum::Boolean(b),
+                                Token::Null => val = Datum::Null,
+                                Token::Number(f) => val = Datum::Number(f),
+                                _ => return Err(ParseError::UnexpectedToken(tok.clone()))
+                            }
+                            ret.push(val);
+                            cur_phase = ParsePhase::FindCommaOrEnd;
+                        },
+                        ParsePhase::FindCommaOrEnd => {
+                            match tok.token {
+                                Token::CloseSquare => return Ok(ret),
+                                Token::Comma => cur_phase = ParsePhase::FindValue,
+                                _ => return Err(ParseError::UnexpectedToken(tok.clone()))
+                            }
+                        },
+                        _ => panic!("Unexpected parse phase!")
+                    }
+                }
+            
+                self.tokens.pop_front();
+            }
+        }
+
+        fn parse_impl(&mut self) -> Result<HashMap::<String, Datum>, ParseError> {
+            if self.tokens.is_empty() || self.tokens.front().unwrap().token != Token::OpenCurly {
+                panic!("Invalid syntax");
+            }
+            
+            let mut ret = HashMap::<String, Datum>::new();
+
+            let mut cur_phase = ParsePhase::FindKeyOrEnd;
+            let mut cur_key: Option<String> = None;
+
+            self.tokens.pop_front();
+            loop {
+                let cur_tok = self.tokens.front();
+                if cur_tok.is_none() {
+                    return Err(ParseError::UnexpectedEof);
+                }
+                let tok = *cur_tok.unwrap();
+                match cur_phase {
+                    ParsePhase::FindKeyOrEnd => {
+                        match tok.token {
+                            Token::CloseCurly => return Ok(ret),
+                            Token::String(str) => {
+                                cur_key = Some(str);
+                                cur_phase = ParsePhase::FindColon;
+                            },
+                            _ => return Err(ParseError::UnexpectedToken(tok))
+                        }
+                    },
+                    ParsePhase::FindKey => {
+                        match tok.token {
+                            Token::String(str) => {
+                                cur_key = Some(str);
+                                cur_phase = ParsePhase::FindColon;
+                            },
+                            _ => return Err(ParseError::UnexpectedToken(tok))
+                        }
+                    },
+                    ParsePhase::FindColon => {
+                        match tok.token {
+                            Token::Colon => cur_phase = ParsePhase::FindValue,
+                            _ => return Err(ParseError::UnexpectedToken(tok))
+                        }
+                    },
+                    ParsePhase::FindValue => {
+                        let mut val: Datum;
+                        match tok.token {
+                            Token::OpenCurly => val = Datum::Object(self.parse_impl()?),
+                            Token::String(str) => val = Datum::Str(str),
+                            Token::Boolean(b) => val = Datum::Boolean(b),
+                            Token::Null => val = Datum::Null,
+                            Token::Number(f) => val = Datum::Number(f),
+                            _ => return Err(ParseError::UnexpectedToken(tok))
+                        }
+                        assert!(cur_key.is_some());
+                        if let Some(key) = cur_key {
+                            ret.insert(key, val);
+                        }
+                        cur_phase = ParsePhase::FindCommaOrEnd;
+                    },
+                    ParsePhase::FindCommaOrEnd => {
+                        match tok.token {
+                            Token::Comma => cur_phase = ParsePhase::FindKey,
+                            Token::CloseCurly => return Ok(ret),
+                            _ => return Err(ParseError::UnexpectedToken(tok))
+                        }
+                    }
+                };
+
+                self.tokens.pop_front();
+            }
+        }
+
+        pub fn parse(&mut self, src: &str) -> bool {
             self.lex(src);
             dbg!(&self.tokens);
+
+
+            let root = self.parse_impl();
+            match root {
+                Ok(r) => self.root = Some(r),
+                Err(e) => println!("Error parsing string: {:?}", e)
+            }
+            return root.is_ok();
         }
     }
 }
