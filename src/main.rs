@@ -9,8 +9,27 @@ fn main() {
     "num": -12.0,
     "b" : true,
     "b2" : false,
-    "nil" : null
+    "nil" : null,
+    "subObj" : {
+        "one": 1,
+        "two": 2,
+        "subArr": [
+            1,
+            "yo",
+            null,
+            [
+                "TestString"
+            ]
+        ]
+    }
 }"#;
-    j.parse(str);
+    let b = j.parse(str);
+    if !b {
+        println!("Parse failed!");
+        return;
+    }
+    
+    dbg!(j.root);
+
 }
 
