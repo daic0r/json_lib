@@ -9,8 +9,7 @@ pub mod json_lib2 {
         CloseSquare,
         String(String),
         Number(f32),
-        Boolean(bool),
-        Null,
+        Identifier(String),
         Comma,
         Colon,
         Quote,
@@ -88,51 +87,18 @@ pub mod json_lib2 {
                         ']' => Token::CloseSquare,
                         ':' => Token::Colon,
                         ',' => Token::Comma,
-                        't' => {
-                            iter.next();
-                            let mut idx = 0;
+                        'a'..='z' | 'A'..='Z' => {
+                            let mut s = String::new();
                             while let Some((_, ch)) = iter.peek() {
-                                match idx {
-                                    0 => assert_eq!(*ch, 'r'),
-                                    1 => assert_eq!(*ch, 'u'),
-                                    2 => { assert_eq!(*ch, 'e'); break; }
-                                    _ => {}
-                                };
-                                idx += 1;
-                                iter.next();
+                                if ch.is_alphanumeric() || *ch == '_' {
+                                    s.push(*ch);
+                                    cnt += 1;
+                                    iter.next();
+                                } else {
+                                    break;
+                                }
                             }
-                            Token::Boolean(true)
-                        },
-                        'f' => {
-                            iter.next();
-                            let mut idx = 0;
-                            while let Some((_, ch)) = iter.peek() {
-                                match idx {
-                                    0 => assert_eq!(*ch, 'a'),
-                                    1 => assert_eq!(*ch, 'l'),
-                                    2 => assert_eq!(*ch, 's'),
-                                    3 => { assert_eq!(*ch, 'e'); break; }
-                                    _ => {}
-                                };
-                                idx += 1;
-                                iter.next();
-                            }
-                            Token::Boolean(false)
-                        },
-                        'n' => {
-                            iter.next();
-                            let mut idx = 0;
-                            while let Some((_, ch)) = iter.peek() {
-                                match idx {
-                                    0 => assert_eq!(*ch, 'u'),
-                                    1 => assert_eq!(*ch, 'l'),
-                                    2 => { assert_eq!(*ch, 'l'); break; }
-                                    _ => {}
-                                };
-                                idx += 1;
-                                iter.next();
-                            }
-                            Token::Null
+                            Token::Identifier(s)
                         },
                         '"' => {
                             let mut s = String::new();
@@ -178,8 +144,12 @@ pub mod json_lib2 {
                         },
                         x => Token::OtherChar(*x)
                     };
-                    let is_num = match tok {
+                    // In case of numbers or identifiers we don't have a delimiting character,
+                    // therefore we must not advance the iterator in that case so we don't skip
+                    // the comma
+                    let is_num_or_identifier = match tok {
                         Token::Number(_) => true,
+                        Token::Identifier(_) => true,
                         _ => false
                     };
                     self.tokens.push_back(LexicalToken{
@@ -190,11 +160,34 @@ pub mod json_lib2 {
                             col: cnt
                         }
                     });
-                    if !is_num {
+                    if !is_num_or_identifier {
                         iter.next();
                    }
                 }
             }
+        }
+
+        fn parse_value(&mut self, t: LexicalToken) -> Result<Datum, ParseError> {
+            let val: Datum;
+            match t.token {
+                Token::OpenCurly => val = Datum::Object(self.parse_impl()?),
+                Token::OpenSquare => val = Datum::Array(self.parse_array()?),
+                Token::String(str) => val = Datum::Str(str),
+                Token::Identifier(ref id) => {
+                    if id == "true" {
+                        val = Datum::Boolean(true);
+                    } else if id == "false" {
+                        val = Datum::Boolean(false);
+                    } else if id == "null" {
+                        val = Datum::Null;
+                    } else {
+                        return Err(ParseError::UnexpectedToken(t));
+                    }
+                },
+                Token::Number(f) => val = Datum::Number(f),
+                _ => return Err(ParseError::UnexpectedToken(t))
+            }
+            Ok(val)
         }
 
         fn parse_array(&mut self) -> Result<Vec<Datum>, ParseError> {
@@ -210,16 +203,7 @@ pub mod json_lib2 {
                 if let Some(tok) = cur_tok {
                     match cur_phase {
                         ParsePhase::FindValue => {
-                            let val: Datum;
-                            match tok.token {
-                                Token::OpenCurly => val = Datum::Object(self.parse_impl()?),
-                                Token::OpenSquare => val = Datum::Array(self.parse_array()?),
-                                Token::String(str) => val = Datum::Str(str),
-                                Token::Boolean(b) => val = Datum::Boolean(b),
-                                Token::Null => val = Datum::Null,
-                                Token::Number(f) => val = Datum::Number(f),
-                                _ => return Err(ParseError::UnexpectedToken(tok.clone()))
-                            }
+                            let val = self.parse_value(tok)?;
                             ret.push(val);
                             cur_phase = ParsePhase::FindCommaOrEnd;
                         },
@@ -275,16 +259,7 @@ pub mod json_lib2 {
                             }
                         },
                         ParsePhase::FindValue => {
-                            let val: Datum;
-                            match tok.token {
-                                Token::OpenCurly => val = Datum::Object(self.parse_impl()?),
-                                Token::OpenSquare => val = Datum::Array(self.parse_array()?),
-                                Token::String(str) => val = Datum::Str(str),
-                                Token::Boolean(b) => val = Datum::Boolean(b),
-                                Token::Null => val = Datum::Null,
-                                Token::Number(f) => val = Datum::Number(f),
-                                _ => return Err(ParseError::UnexpectedToken(tok))
-                            }
+                            let val = self.parse_value(tok)?;
                             assert!(cur_key.is_some());
                             if let Some(ref key) = cur_key {
                                 ret.insert(key.to_string(), val);
