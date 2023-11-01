@@ -1,5 +1,5 @@
 pub mod json_lib2 {
-    use std::collections::{HashMap, VecDeque, HashSet};
+    use std::collections::{HashMap, HashSet, VecDeque};
 
     #[derive(PartialEq, Clone, Debug)]
     pub enum Token {
@@ -13,7 +13,7 @@ pub mod json_lib2 {
         Comma,
         Colon,
         Quote,
-        OtherChar(char)
+        Other(String),
     }
 
     #[derive(Debug, PartialEq)]
@@ -22,27 +22,27 @@ pub mod json_lib2 {
         Number(f32),
         Boolean(bool),
         Null,
-        Object(HashMap::<String, Datum>),
-        Array(Vec<Datum>)
+        Object(HashMap<String, Datum>),
+        Array(Vec<Datum>),
     }
 
     #[derive(Debug, Clone)]
     pub struct SourceLocation {
         col: usize,
-        row: usize
+        row: usize,
     }
 
     #[derive(Debug, Clone)]
     pub struct LexicalToken {
         token: Token,
         from: SourceLocation,
-        to: SourceLocation
+        to: SourceLocation,
     }
 
     #[derive(Debug)]
     pub enum ParseError {
         UnexpectedToken(LexicalToken),
-        UnexpectedEof
+        UnexpectedEof,
     }
 
     enum ParsePhase {
@@ -50,7 +50,7 @@ pub mod json_lib2 {
         FindKeyOrEnd,
         FindColon,
         FindValue,
-        FindCommaOrEnd
+        FindCommaOrEnd,
     }
 
     pub struct Json {
@@ -62,7 +62,7 @@ pub mod json_lib2 {
         pub fn new() -> Self {
             Json {
                 root: None,
-                tokens: VecDeque::<LexicalToken>::new()
+                tokens: VecDeque::<LexicalToken>::new(),
             }
         }
 
@@ -77,7 +77,7 @@ pub mod json_lib2 {
                     }
                     let start_loc = SourceLocation {
                         col: *cnum,
-                        row: lnum
+                        row: lnum,
                     };
                     let mut cnt = *cnum;
                     let tok = match ch {
@@ -99,7 +99,7 @@ pub mod json_lib2 {
                                 }
                             }
                             Token::Identifier(s)
-                        },
+                        }
                         '"' => {
                             let mut s = String::new();
                             let mut string_closed = false;
@@ -116,13 +116,14 @@ pub mod json_lib2 {
                             if !string_closed {
                                 panic!("Expected \"");
                             }
-                            cnt += 1; 
-                            Token::String(s) 
-                        },
+                            cnt += 1;
+                            Token::String(s)
+                        }
                         '-' | '0'..='9' => {
                             let mut s = String::new();
                             s.push(*ch);
                             iter.next();
+                            cnt += 1;
                             let mut is_floating = false;
                             while let Some((_, ch)) = iter.peek() {
                                 if *ch >= '0' && *ch <= '9' || (!is_floating && *ch == '.') {
@@ -138,11 +139,12 @@ pub mod json_lib2 {
                             }
                             let num = s.parse::<f32>();
                             if let Err(n) = num {
-                                panic!("Parse error. String was {}", s);
+                                Token::Other(s)
+                            } else  {
+                                Token::Number(num.unwrap())
                             }
-                            Token::Number(num.unwrap())
-                        },
-                        x => Token::OtherChar(*x)
+                        }
+                        x => Token::Other(String::from(*x)),
                     };
                     // In case of numbers or identifiers we don't have a delimiting character,
                     // therefore we must not advance the iterator in that case so we don't skip
@@ -150,19 +152,19 @@ pub mod json_lib2 {
                     let is_num_or_identifier = match tok {
                         Token::Number(_) => true,
                         Token::Identifier(_) => true,
-                        _ => false
+                        _ => false,
                     };
-                    self.tokens.push_back(LexicalToken{
+                    self.tokens.push_back(LexicalToken {
                         token: tok,
                         from: start_loc,
                         to: SourceLocation {
                             row: lnum,
-                            col: cnt
-                        }
+                            col: cnt,
+                        },
                     });
                     if !is_num_or_identifier {
                         iter.next();
-                   }
+                    }
                 }
             }
         }
@@ -183,9 +185,9 @@ pub mod json_lib2 {
                     } else {
                         return Err(ParseError::UnexpectedToken(t));
                     }
-                },
+                }
                 Token::Number(f) => val = Datum::Number(f),
-                _ => return Err(ParseError::UnexpectedToken(t))
+                _ => return Err(ParseError::UnexpectedToken(t)),
             }
             Ok(val)
         }
@@ -206,21 +208,19 @@ pub mod json_lib2 {
                             let val = self.parse_value(tok)?;
                             ret.push(val);
                             cur_phase = ParsePhase::FindCommaOrEnd;
+                        }
+                        ParsePhase::FindCommaOrEnd => match tok.token {
+                            Token::CloseSquare => return Ok(ret),
+                            Token::Comma => cur_phase = ParsePhase::FindValue,
+                            _ => return Err(ParseError::UnexpectedToken(tok.clone())),
                         },
-                        ParsePhase::FindCommaOrEnd => {
-                            match tok.token {
-                                Token::CloseSquare => return Ok(ret),
-                                Token::Comma => cur_phase = ParsePhase::FindValue,
-                                _ => return Err(ParseError::UnexpectedToken(tok.clone()))
-                            }
-                        },
-                        _ => panic!("Unexpected parse phase!")
+                        _ => panic!("Unexpected parse phase!"),
                     }
                 }
             }
         }
 
-        fn parse_impl(&mut self) -> Result<HashMap::<String, Datum>, ParseError> {
+        fn parse_impl(&mut self) -> Result<HashMap<String, Datum>, ParseError> {
             let mut ret = HashMap::<String, Datum>::new();
 
             let mut cur_phase = ParsePhase::FindKeyOrEnd;
@@ -233,30 +233,24 @@ pub mod json_lib2 {
                 }
                 if let Some(tok) = cur_tok {
                     match cur_phase {
-                        ParsePhase::FindKeyOrEnd => {
-                            match tok.token {
-                                Token::CloseCurly => return Ok(ret),
-                                Token::String(str) => {
-                                    cur_key = Some(str);
-                                    cur_phase = ParsePhase::FindColon;
-                                },
-                                _ => return Err(ParseError::UnexpectedToken(tok))
+                        ParsePhase::FindKeyOrEnd => match tok.token {
+                            Token::CloseCurly => return Ok(ret),
+                            Token::String(str) => {
+                                cur_key = Some(str);
+                                cur_phase = ParsePhase::FindColon;
                             }
+                            _ => return Err(ParseError::UnexpectedToken(tok)),
                         },
-                        ParsePhase::FindKey => {
-                            match tok.token {
-                                Token::String(str) => {
-                                    cur_key = Some(str);
-                                    cur_phase = ParsePhase::FindColon;
-                                },
-                                _ => return Err(ParseError::UnexpectedToken(tok))
+                        ParsePhase::FindKey => match tok.token {
+                            Token::String(str) => {
+                                cur_key = Some(str);
+                                cur_phase = ParsePhase::FindColon;
                             }
+                            _ => return Err(ParseError::UnexpectedToken(tok)),
                         },
-                        ParsePhase::FindColon => {
-                            match tok.token {
-                                Token::Colon => cur_phase = ParsePhase::FindValue,
-                                _ => return Err(ParseError::UnexpectedToken(tok))
-                            }
+                        ParsePhase::FindColon => match tok.token {
+                            Token::Colon => cur_phase = ParsePhase::FindValue,
+                            _ => return Err(ParseError::UnexpectedToken(tok)),
                         },
                         ParsePhase::FindValue => {
                             let val = self.parse_value(tok)?;
@@ -265,14 +259,12 @@ pub mod json_lib2 {
                                 ret.insert(key.to_string(), val);
                             }
                             cur_phase = ParsePhase::FindCommaOrEnd;
-                        },
-                        ParsePhase::FindCommaOrEnd => {
-                            match tok.token {
-                                Token::Comma => cur_phase = ParsePhase::FindKey,
-                                Token::CloseCurly => return Ok(ret),
-                                _ => return Err(ParseError::UnexpectedToken(tok))
-                            }
                         }
+                        ParsePhase::FindCommaOrEnd => match tok.token {
+                            Token::Comma => cur_phase = ParsePhase::FindKey,
+                            Token::CloseCurly => return Ok(ret),
+                            _ => return Err(ParseError::UnexpectedToken(tok)),
+                        },
                     };
                 }
             }
@@ -282,19 +274,19 @@ pub mod json_lib2 {
             self.lex(src);
             dbg!(&self.tokens);
 
-
-            if self.tokens.is_empty() || self.tokens.pop_front().unwrap().token != Token::OpenCurly {
+            if self.tokens.is_empty() || self.tokens.pop_front().unwrap().token != Token::OpenCurly
+            {
                 panic!("Invalid syntax");
             }
-            
+
             let root = self.parse_impl();
             match root {
                 Ok(r) => {
                     assert!(self.tokens.is_empty());
                     self.root = Some(r);
                     return true;
-                },
-                Err(e) => println!("Error parsing string: {:?}", e)
+                }
+                Err(e) => println!("Error parsing string: {:?}", e),
             }
             return false;
         }
@@ -324,23 +316,40 @@ mod tests {
         "#;
         let res = json.parse(src);
         assert!(res);
-        
+
         let root = json.root.unwrap();
-        assert_eq!(root["name"], crate::json_lib2::Datum::Str(String::from("John")));
+        assert_eq!(
+            root["name"],
+            crate::json_lib2::Datum::Str(String::from("John"))
+        );
         assert_eq!(root["age"], crate::json_lib2::Datum::Number(30.0));
-        assert_eq!(root["cars"], crate::json_lib2::Datum::Object(
-            vec![
-                (String::from("car1"), crate::json_lib2::Datum::Str(String::from("Ford"))),
-                (String::from("car2"), crate::json_lib2::Datum::Str(String::from("BMW"))),
-                (String::from("car3"), crate::json_lib2::Datum::Str(String::from("Fiat")))
-            ].into_iter().collect()
-        ));
-        assert_eq!(root["children"], crate::json_lib2::Datum::Array(
-            vec![
+        assert_eq!(
+            root["cars"],
+            crate::json_lib2::Datum::Object(
+                vec![
+                    (
+                        String::from("car1"),
+                        crate::json_lib2::Datum::Str(String::from("Ford"))
+                    ),
+                    (
+                        String::from("car2"),
+                        crate::json_lib2::Datum::Str(String::from("BMW"))
+                    ),
+                    (
+                        String::from("car3"),
+                        crate::json_lib2::Datum::Str(String::from("Fiat"))
+                    )
+                ]
+                .into_iter()
+                .collect()
+            )
+        );
+        assert_eq!(
+            root["children"],
+            crate::json_lib2::Datum::Array(vec![
                 crate::json_lib2::Datum::Str(String::from("Ann")),
                 crate::json_lib2::Datum::Str(String::from("Billy"))
-            ]
-        ));
+            ])
+        );
     }
-
 }
